@@ -1,9 +1,15 @@
+//! Tape node definitions for the reverse-mode tape.
+
 use std::{fmt, ptr::NonNull};
 
+/// A node recorded on the tape, with child links and adjoint values.
 #[derive(Clone)]
 pub struct TapeNode {
+    /// Child nodes that receive propagated adjoints.
     pub childs: Vec<NonNull<TapeNode>>,
+    /// Local derivatives for each child.
     pub derivs: Vec<f64>,
+    /// The accumulated adjoint for this node.
     pub adj: f64,
 }
 
@@ -18,6 +24,7 @@ impl fmt::Debug for TapeNode {
 }
 
 impl Default for TapeNode {
+    /// Constructs an empty tape node with zero adjoint.
     fn default() -> Self {
         Self {
             childs: Vec::new(),
@@ -29,6 +36,7 @@ impl Default for TapeNode {
 
 impl TapeNode {
     #[inline(always)]
+    /// Propagates this node's adjoint into each child using stored derivatives.
     pub fn propagate_into(&self) {
         debug_assert_eq!(self.childs.len(), self.derivs.len());
         let a = self.adj;
