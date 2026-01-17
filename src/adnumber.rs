@@ -9,23 +9,34 @@ use std::cell::Cell;
 use std::ptr::NonNull;
 use std::{cmp::Ordering, ops::*};
 
+/// A scalar value tracked on the automatic differentiation tape.
+#[derive(Clone, Copy, Default)]
+pub struct ADReal {
+    val: f64,
+    node: Option<NonNull<TapeNode>>,
+}
+
 /// Conversion helpers for numeric types used by this crate.
-pub trait ToNumeric<T> {
-    /// Creates a new numeric value from the given scalar.
-    fn new(v: T) -> Self;
+pub trait IsReal
+where
+    Self: Sized,
+{
+    /// Creates a new numeric value from the given scalar in f64.
+    fn new(v: f64) -> Self;
     /// Returns the underlying scalar value.
-    fn value(&self) -> T;
-    /// Returns the multiplicative identity.
+    fn value(&self) -> f64;
+    /// Returns one as base-type.
     fn one() -> Self;
-    /// Returns the additive identity.
+    /// Returns zero as base-type.
     fn zero() -> Self;
 }
 
-impl ToNumeric<f64> for f64 {
+impl IsReal for f64 {
     #[inline]
     fn new(v: f64) -> Self {
         v
     }
+
     #[inline]
     fn value(&self) -> f64 {
         *self
@@ -41,20 +52,11 @@ impl ToNumeric<f64> for f64 {
     }
 }
 
-impl ToNumeric<f64> for ADNumber {
+impl IsReal for ADReal {
     #[inline]
     fn new(v: f64) -> Self {
-        let node = ADNumber::TAPE_PTR.with(|t| {
-            if !t.get().is_null() {
-                unsafe { t.get().as_mut().unwrap().new_leaf() }
-            } else {
-                panic!("ADNumber::new called without a tape set");
-            }
-        });
-        Self {
-            val: v,
-            node: Some(node),
-        }
+        let node = ADReal::TAPE_PTR.with(|t| unsafe { t.get().as_mut().new_leaf() });
+        Self { val: v, node: node }
     }
     #[inline]
     fn value(&self) -> f64 {
@@ -62,11 +64,11 @@ impl ToNumeric<f64> for ADNumber {
     }
     #[inline]
     fn one() -> Self {
-        ADNumber::new(1.0)
+        ADReal::new(1.0)
     }
     #[inline]
     fn zero() -> Self {
-        ADNumber::new(0.0)
+        ADReal::new(0.0)
     }
 }
 
@@ -78,78 +80,34 @@ pub trait Expr: Clone {
     fn push_adj(&self, parent: &mut TapeNode, adj: f64);
 }
 
-/// A scalar value tracked on the automatic differentiation tape.
-#[derive(Clone, Copy, Default)]
-pub struct ADNumber {
-    val: f64,
-    node: Option<NonNull<TapeNode>>,
-}
-
-impl fmt::Debug for ADNumber {
+impl fmt::Debug for ADReal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ADNumber({}, Node: {:?})", self.val, self.node)
+        write!(f, "ADReal({}, Node: {:?})", self.val, self.node)
     }
 }
 
-impl fmt::Display for ADNumber {
+impl fmt::Display for ADReal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ADNumber({})", self.val)
+        write!(f, "ADReal({})", self.val)
     }
 }
 
-unsafe impl Sync for ADNumber {}
-unsafe impl Send for ADNumber {}
+unsafe impl Sync for ADReal {}
+unsafe impl Send for ADReal {}
 
-impl ADNumber {
+impl ADReal {
     thread_local! {
-        static TAPE_PTR: Cell<*mut Tape> = Cell::new(unsafe {
-            &mut *TAPE.with(|t| t.as_ptr()) as *mut Tape
-        });
+        static TAPE_PTR: Cell<NonNull<Tape>> = Cell::new(TAPE.with(|t| NonNull::new(t.as_ptr()).unwrap()));
     }
 
     /// Sets the active tape for the current thread.
-    pub fn set_tape(t: &mut Tape) {
+    pub fn set_tape(t: NonNull<Tape>) {
         Self::TAPE_PTR.with(|c| c.set(t));
     }
 
-    /// Returns whether a tape pointer has been configured for this thread.
-    pub fn has_tape() -> bool {
-        Self::TAPE_PTR.with(|c| !c.get().is_null())
-    }
-
     /// Returns the raw pointer address of the current tape.
-    pub fn tape_addr() -> *mut Tape {
+    pub fn tape_addr() -> NonNull<Tape> {
         Self::TAPE_PTR.with(|c| c.get())
-    }
-
-    /// Creates a new scalar, recording it on the tape if recording is active.
-    pub fn new(v: f64) -> Self {
-        Self::TAPE_PTR.with(|t| {
-            let ptr = t.get();
-            if !ptr.is_null() {
-                let active = unsafe { (*ptr).active };
-                if active {
-                    let node = unsafe { (*ptr).new_leaf() };
-                    ADNumber {
-                        val: v,
-                        node: Some(node),
-                    }
-                } else {
-                    ADNumber { val: v, node: None }
-                }
-            } else {
-                ADNumber {
-                    val: v,
-                    node: None, // no tape active
-                }
-            }
-        })
-    }
-
-    #[inline]
-    /// Returns the stored scalar value.
-    pub fn value(&self) -> f64 {
-        self.val
     }
 
     #[inline]
@@ -165,7 +123,7 @@ impl ADNumber {
         let root = self.node.ok_or(ADError::NodeNotIndexedInTapeErr)?;
 
         Self::TAPE_PTR.with(|t| {
-            let tape = unsafe { &mut *t.get() };
+            let tape = unsafe { &mut *t.get().as_ptr() };
             tape.mut_node(root).unwrap().adj = 1.0;
             tape.propagate_from(root)
         })?;
@@ -177,7 +135,7 @@ impl ADNumber {
         let root: NonNull<TapeNode> = self.node.ok_or(ADError::NodeNotIndexedInTapeErr)?;
 
         Self::TAPE_PTR.with(|t| {
-            let tape = unsafe { &mut *t.get() };
+            let tape = unsafe { &mut *t.get().as_ptr() };
             tape.mut_node(root).unwrap().adj = 1.0;
             tape.propagate_mark_to_start()
         });
@@ -188,7 +146,7 @@ impl ADNumber {
     pub fn backward_to_mark(&self) -> Result<()> {
         let root: NonNull<TapeNode> = self.node.ok_or(ADError::NodeNotIndexedInTapeErr)?;
         Self::TAPE_PTR.with(|t| {
-            let tape = unsafe { &mut *t.get() };
+            let tape = unsafe { &mut *t.get().as_ptr() };
             tape.mut_node(root).unwrap().adj = 1.0;
             tape.propagate_to_mark()
         });
@@ -202,18 +160,14 @@ impl ADNumber {
         }
 
         Self::TAPE_PTR.with(|t| {
-            let ptr = t.get();
-            if !ptr.is_null() {
-                let node = unsafe { (*ptr).new_leaf() };
-                self.node = Some(node);
-            } else {
-                panic!("ADNumber::put_on_tape called without a tape set");
-            }
+            let ptr = t.get().as_ptr();
+            let node = unsafe { (*ptr).new_leaf() };
+            self.node = node;
         });
     }
 }
 
-impl Expr for ADNumber {
+impl Expr for ADReal {
     #[inline]
     /// Returns the scalar value for use in tape recording.
     fn inner_value(&self) -> f64 {
@@ -229,34 +183,34 @@ impl Expr for ADNumber {
     }
 }
 
-/// Records an expression into the tape, returning the resulting `ADNumber`.
-fn flatten<E: Expr + Clone>(e: &E) -> ADNumber {
+/// Records an expression into the tape, returning the resulting `ADReal`.
+fn flatten<E: Expr + Clone>(e: &E) -> ADReal {
     let mut node = TapeNode::default();
     e.push_adj(&mut node, 1.0);
 
-    let ptr_opt = ADNumber::TAPE_PTR.with(|t| {
-        let tape = unsafe { &mut *t.get() };
-        tape.record(node)
+    let ptr_opt = ADReal::TAPE_PTR.with(|t| {
+        let tape_ptr = unsafe { &mut *t.get().as_ptr() };
+        tape_ptr.record(node)
     });
 
-    ADNumber {
+    ADReal {
         val: e.inner_value(),
         node: ptr_opt,
     }
 }
 
-impl PartialEq for ADNumber {
+impl PartialEq for ADReal {
     fn eq(&self, o: &Self) -> bool {
         self.val == o.val
     }
 }
-impl PartialOrd for ADNumber {
+impl PartialOrd for ADReal {
     fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
         self.val.partial_cmp(&o.val)
     }
 }
 
-// impl Serialize for ADNumber {
+// impl Serialize for ADReal {
 //     fn serialize<S>(&self, s: S) -> std::result::Result<S::Ok, S::Error>
 //     where
 //         S: serde::Serializer,
@@ -264,13 +218,13 @@ impl PartialOrd for ADNumber {
 //         s.serialize_f64(self.val)
 //     }
 // }
-// impl<'de> Deserialize<'de> for ADNumber {
+// impl<'de> Deserialize<'de> for ADReal {
 //     fn deserialize<D>(d: D) -> std::result::Result<Self, D::Error>
 //     where
 //         D: serde::Deserializer<'de>,
 //     {
 //         let v = f64::deserialize(d)?;
-//         Ok(ADNumber::new(v))
+//         Ok(ADReal::new(v))
 //     }
 // }
 
@@ -560,20 +514,25 @@ macro_rules! un_op {
 }
 
 un_op!(ExpOp, "Unary exponential operator.", f64::exp, |_x, v| v);
-un_op!(LogOp, "Unary natural logarithm operator.", f64::ln, |x, _| 1.0 / x);
-un_op!(SqrtOp, "Unary square root operator.", f64::sqrt, |_x, v| 0.5 / v);
+un_op!(
+    LogOp,
+    "Unary natural logarithm operator.",
+    f64::ln,
+    |x, _| 1.0 / x
+);
+un_op!(
+    SqrtOp,
+    "Unary square root operator.",
+    f64::sqrt,
+    |_x, v| 0.5 / v
+);
 un_op!(
     FabsOp,
     "Unary absolute value operator (alias).",
     f64::abs,
     |x, _| if x >= 0.0 { 1.0 } else { -1.0 }
 );
-un_op!(
-    SinOp,
-    "Unary sine operator.",
-    f64::sin,
-    |x, _v| f64::cos(x)
-);
+un_op!(SinOp, "Unary sine operator.", f64::sin, |x, _v| f64::cos(x));
 un_op!(
     CosOp,
     "Unary cosine operator.",
@@ -713,7 +672,7 @@ macro_rules! impl_bin_ops_local {
     };
 }
 
-impl_bin_ops_local!(ADNumber);
+impl_bin_ops_local!(ADReal);
 impl_bin_ops_local!(Const);
 
 macro_rules! impl_bin_ops_expr {
@@ -818,7 +777,7 @@ impl_bin_ops_expr!(BinExpr);
 
 macro_rules! impl_assign {
     ($Trait:ident, $func:ident, $Op:ident, $sym:tt) => {
-        impl<E> $Trait<E> for ADNumber
+        impl<E> $Trait<E> for ADReal
         where
             E: Expr + Clone,
         {
@@ -826,7 +785,7 @@ macro_rules! impl_assign {
                 *self = flatten(&(self.clone() $sym rhs));
             }
         }
-        impl $Trait<f64> for ADNumber {
+        impl $Trait<f64> for ADReal {
             fn $func(&mut self, rhs: f64) {
                 *self = flatten(&(self.clone() $sym Const(rhs)));
             }
@@ -970,43 +929,43 @@ pub fn min<L: Expr + Clone, R: Expr + Clone>(l: L, r: R) -> BinExpr<L, R, MinOp>
     BinExpr::new(l, r)
 }
 
-impl<L, R, O> From<BinExpr<L, R, O>> for ADNumber
+impl<L, R, O> From<BinExpr<L, R, O>> for ADReal
 where
     L: Expr + Clone,
     R: Expr + Clone,
     O: BinOp + Clone,
 {
-    /// Flattens a binary expression into an `ADNumber` and records it.
+    /// Flattens a binary expression into an `ADReal` and records it.
     fn from(e: BinExpr<L, R, O>) -> Self {
         flatten(&e)
     }
 }
-impl<A, O> From<UnExpr<A, O>> for ADNumber
+impl<A, O> From<UnExpr<A, O>> for ADReal
 where
     A: Expr + Clone,
     O: UnOp + Clone,
 {
-    /// Flattens a unary expression into an `ADNumber` and records it.
+    /// Flattens a unary expression into an `ADReal` and records it.
     fn from(e: UnExpr<A, O>) -> Self {
         flatten(&e)
     }
 }
-impl From<f64> for ADNumber {
-    /// Converts a `f64` into an `ADNumber`, recording if the tape is active.
+impl From<f64> for ADReal {
+    /// Converts a `f64` into an `ADReal`, recording if the tape is active.
     fn from(v: f64) -> Self {
-        ADNumber::new(v)
+        ADReal::new(v)
     }
 }
-impl From<f32> for ADNumber {
-    /// Converts a `f32` into an `ADNumber`, recording if the tape is active.
+impl From<f32> for ADReal {
+    /// Converts a `f32` into an `ADReal`, recording if the tape is active.
     fn from(v: f32) -> Self {
-        ADNumber::new(v as f64)
+        ADReal::new(v as f64)
     }
 }
-impl From<i32> for ADNumber {
-    /// Converts an `i32` into an `ADNumber`, recording if the tape is active.
+impl From<i32> for ADReal {
+    /// Converts an `i32` into an `ADReal`, recording if the tape is active.
     fn from(v: i32) -> Self {
-        ADNumber::new(v as f64)
+        ADReal::new(v as f64)
     }
 }
 
@@ -1160,14 +1119,14 @@ where
     }
 }
 
-impl PartialEq<f64> for ADNumber {
+impl PartialEq<f64> for ADReal {
     #[inline]
     fn eq(&self, rhs: &f64) -> bool {
         self.value() == *rhs
     }
 }
 
-impl PartialOrd<f64> for ADNumber {
+impl PartialOrd<f64> for ADReal {
     #[inline]
     fn partial_cmp(&self, rhs: &f64) -> Option<Ordering> {
         self.value().partial_cmp(rhs)
@@ -1180,32 +1139,32 @@ mod tests {
 
     #[test]
     fn compare_and_flatten() {
-        let x = ADNumber::new(5.0);
+        let x = ADReal::new(5.0);
         let y = abs(x - 2.0);
         assert!(y > 2.0); // value-based comparison
-        let z: ADNumber = (y + 1.0).into();
+        let z: ADReal = (y + 1.0).into();
         assert_eq!(z.value(), 4.0);
     }
 
     #[test]
     fn backprop_basic() {
         Tape::start_recording();
-        let a = ADNumber::new(3.0);
-        let b = ADNumber::new(4.0);
+        let a = ADReal::new(3.0);
+        let b = ADReal::new(4.0);
         let expr = (a * b).sin();
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(out.adjoint().unwrap(), 1.0);
     }
 
     #[test]
     fn test_late_tape_recording() {
-        let mut a = ADNumber::new(3.0);
-        println!("a: {:?}", a);
+        let mut a = ADReal::new(3.0); // we need to declare it as mut as it will be mutated when added to the tape...
         Tape::start_recording(); // start recording
+      
         a.put_on_tape();
         let expr = a * a;
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(a.adjoint().unwrap(), 6.0);
     }
@@ -1213,10 +1172,10 @@ mod tests {
     #[test]
     fn backprop_with_const() {
         Tape::start_recording();
-        let a = ADNumber::new(3.0);
+        let a = ADReal::new(3.0);
         let b = Const(4.0);
         let expr = (a * b).sin();
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(out.adjoint().unwrap(), 1.0);
     }
@@ -1224,10 +1183,10 @@ mod tests {
     #[test]
     fn tape_reset() {
         Tape::start_recording();
-        let a = ADNumber::new(3.0);
-        let b = ADNumber::new(4.0);
+        let a = ADReal::new(3.0);
+        let b = ADReal::new(4.0);
         let expr = (a * b).sin();
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(out.adjoint().unwrap(), 1.0);
 
@@ -1238,10 +1197,10 @@ mod tests {
     #[test]
     fn tape_propagate_mark() {
         Tape::start_recording();
-        let a = ADNumber::new(3.0);
-        let b = ADNumber::new(4.0);
+        let a = ADReal::new(3.0);
+        let b = ADReal::new(4.0);
         let expr = (a * b).sin();
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward_to_mark().unwrap(); // propagate to the current mark
         assert_eq!(out.adjoint().unwrap(), 1.0); // should be 1.0
     }
@@ -1249,10 +1208,10 @@ mod tests {
     #[test]
     fn tape_backward_to_mark() {
         Tape::start_recording();
-        let a = ADNumber::new(3.0);
-        let b = ADNumber::new(4.0);
+        let a = ADReal::new(3.0);
+        let b = ADReal::new(4.0);
         let expr = (a * b).sin();
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward_to_mark().unwrap(); // propagate to the current mark
         assert_eq!(out.adjoint().unwrap(), 1.0); // should be 1.0
 
@@ -1263,9 +1222,9 @@ mod tests {
     #[test]
     fn check_exp_derivate() {
         Tape::start_recording();
-        let x = ADNumber::new(2.0);
+        let x = ADReal::new(2.0);
         let expr = exp(x);
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), f64::exp(2.0)); // derivative of exp(x) wrt x
         assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1274,9 +1233,9 @@ mod tests {
     #[test]
     fn check_log_derivative() {
         Tape::start_recording();
-        let x = ADNumber::new(2.0);
+        let x = ADReal::new(2.0);
         let expr = log(x);
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), 1.0 / 2.0); // derivative of log(x) wrt x
         assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1284,9 +1243,9 @@ mod tests {
     #[test]
     fn check_sqrt_derivative() {
         Tape::start_recording();
-        let x = ADNumber::new(4.0);
+        let x = ADReal::new(4.0);
         let expr = sqrt(x);
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), 0.5 / 2.0); // derivative of sqrt(x) wrt x
         assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1294,9 +1253,9 @@ mod tests {
     #[test]
     fn check_sin_derivative() {
         Tape::start_recording();
-        let x = ADNumber::new(0.0);
+        let x = ADReal::new(0.0);
         let expr = sin(x);
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), 1.0); // derivative of sin(x) wrt x
         assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1304,9 +1263,9 @@ mod tests {
     #[test]
     fn check_cos_derivative() {
         Tape::start_recording();
-        let x = ADNumber::new(0.0);
+        let x = ADReal::new(0.0);
         let expr = cos(x);
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), 0.0); // derivative of cos(x) wrt x
         assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1314,9 +1273,9 @@ mod tests {
     #[test]
     fn check_abs_derivative() {
         Tape::start_recording();
-        let x = ADNumber::new(-3.0);
+        let x = ADReal::new(-3.0);
         let expr = abs(x);
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), -1.0); // derivative of abs(x) wrt x
         assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1324,9 +1283,9 @@ mod tests {
     #[test]
     fn check_pow_derivative() {
         Tape::start_recording();
-        let x = ADNumber::new(2.0);
+        let x = ADReal::new(2.0);
         let expr = pow(x, Const(3.0));
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), 3.0 * 2.0f64.powf(2.0)); // derivative of x^3 wrt x at x=2
         assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1334,10 +1293,10 @@ mod tests {
     #[test]
     fn check_max_derivative() {
         Tape::start_recording();
-        let x = ADNumber::new(2.0);
-        let y = ADNumber::new(3.0);
+        let x = ADReal::new(2.0);
+        let y = ADReal::new(3.0);
         let expr = max(x, y);
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), 0.0); // derivative wrt x
         assert_eq!(y.adjoint().unwrap(), 1.0); // derivative wrt y
@@ -1346,10 +1305,10 @@ mod tests {
     #[test]
     fn check_min_derivative() {
         Tape::start_recording();
-        let x = ADNumber::new(2.0);
-        let y = ADNumber::new(3.0);
+        let x = ADReal::new(2.0);
+        let y = ADReal::new(3.0);
         let expr = min(x, y);
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), 1.0); // derivative wrt x
         assert_eq!(y.adjoint().unwrap(), 0.0); // derivative wrt y
@@ -1358,10 +1317,10 @@ mod tests {
     #[test]
     fn check_flattening() {
         Tape::start_recording();
-        let x = ADNumber::new(5.0);
-        let y = ADNumber::new(3.0);
+        let x = ADReal::new(5.0);
+        let y = ADReal::new(3.0);
         let expr = (x + y) * 2.0;
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         assert_eq!(out.value(), 16.0); // (5 + 3) * 2 = 16
         out.backward().unwrap();
         assert_eq!(out.adjoint().unwrap(), 1.0); // should be 1.0 after propagation
@@ -1370,10 +1329,10 @@ mod tests {
     #[test]
     fn check_add_derivative() {
         Tape::start_recording();
-        let x = ADNumber::new(2.0);
-        let y = ADNumber::new(3.0);
+        let x = ADReal::new(2.0);
+        let y = ADReal::new(3.0);
         let expr = x + y;
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), 1.0);
         assert_eq!(y.adjoint().unwrap(), 1.0);
@@ -1383,10 +1342,10 @@ mod tests {
     #[test]
     fn check_sub_derivative() {
         Tape::start_recording();
-        let x = ADNumber::new(5.0);
-        let y = ADNumber::new(2.0);
+        let x = ADReal::new(5.0);
+        let y = ADReal::new(2.0);
         let expr = x - y;
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), 1.0);
         assert_eq!(y.adjoint().unwrap(), -1.0);
@@ -1396,10 +1355,10 @@ mod tests {
     #[test]
     fn check_mul_derivative() {
         Tape::start_recording();
-        let x = ADNumber::new(4.0);
-        let y = ADNumber::new(2.0);
+        let x = ADReal::new(4.0);
+        let y = ADReal::new(2.0);
         let expr = x * y;
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), 2.0);
         assert_eq!(y.adjoint().unwrap(), 4.0);
@@ -1409,10 +1368,10 @@ mod tests {
     #[test]
     fn check_div_derivative() {
         Tape::start_recording();
-        let x = ADNumber::new(6.0);
-        let y = ADNumber::new(3.0);
+        let x = ADReal::new(6.0);
+        let y = ADReal::new(3.0);
         let expr = x / y;
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert!((x.adjoint().unwrap() - (1.0 / 3.0)).abs() < 1e-12);
         assert!((y.adjoint().unwrap() + (6.0 / 9.0)).abs() < 1e-12);
@@ -1422,9 +1381,9 @@ mod tests {
     #[test]
     fn check_fabs_derivative() {
         Tape::start_recording();
-        let x = ADNumber::new(-2.0);
+        let x = ADReal::new(-2.0);
         let expr = fabs(x);
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), -1.0);
         assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1433,10 +1392,10 @@ mod tests {
     #[test]
     fn check_pow_variable_exponent() {
         Tape::start_recording();
-        let x = ADNumber::new(2.0);
-        let y = ADNumber::new(3.0);
+        let x = ADReal::new(2.0);
+        let y = ADReal::new(3.0);
         let expr = pow(x, y);
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), 3.0 * 2.0f64.powf(2.0));
         assert!((y.adjoint().unwrap() - (8.0 * 2.0f64.ln())).abs() < 1e-12);
@@ -1446,10 +1405,10 @@ mod tests {
     #[test]
     fn check_max_derivative_x_greater() {
         Tape::start_recording();
-        let x = ADNumber::new(5.0);
-        let y = ADNumber::new(3.0);
+        let x = ADReal::new(5.0);
+        let y = ADReal::new(3.0);
         let expr = max(x, y);
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), 1.0);
         assert_eq!(y.adjoint().unwrap(), 0.0);
@@ -1459,10 +1418,10 @@ mod tests {
     #[test]
     fn check_min_derivative_y_less() {
         Tape::start_recording();
-        let x = ADNumber::new(5.0);
-        let y = ADNumber::new(3.0);
+        let x = ADReal::new(5.0);
+        let y = ADReal::new(3.0);
         let expr = min(x, y);
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), 0.0);
         assert_eq!(y.adjoint().unwrap(), 1.0);
@@ -1472,9 +1431,9 @@ mod tests {
     #[test]
     fn check_abs_positive_derivative() {
         Tape::start_recording();
-        let x = ADNumber::new(3.0);
+        let x = ADReal::new(3.0);
         let expr = abs(x);
-        let out: ADNumber = expr.into();
+        let out: ADReal = expr.into();
         out.backward().unwrap();
         assert_eq!(x.adjoint().unwrap(), 1.0);
         assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1484,8 +1443,8 @@ mod tests {
     fn test_reassigning() {
         Tape::start_recording();
 
-        let a0 = ADNumber::new(5.0); // keep an immutable handle to the leaf
-        let b = ADNumber::new(3.0);
+        let a0 = ADReal::new(5.0); // keep an immutable handle to the leaf
+        let b = ADReal::new(3.0);
         let mut a = a0; // mutable alias
         a *= b; // 5 * 3 = 15
         let c = a;

@@ -11,9 +11,9 @@ pub enum ADError {
     #[error("Tape error: {0}")]
     /// A generic tape error.
     TapeError(String),
-    #[error("AD Number error: {0}")]
+    #[error("AD Real error: {0}")]
     /// A generic AD number error.
-    ADNumberError(String),
+    ADRealError(String),
     #[error("Node not indexed in tape")]
     /// Attempted to access a node that is not recorded on the tape.
     NodeNotIndexedInTapeErr,

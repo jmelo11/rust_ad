@@ -16,6 +16,16 @@ pub struct Tape {
 }
 
 impl Tape {
+    /// Creates an empty tape with recording disabled.
+    pub fn new() -> Self {
+        Tape {
+            bump: Bump::new(),
+            book: Vec::new(),
+            mark: 0,
+            active: false,
+        }
+    }
+
     #[inline(always)]
     /// Allocates a node in the bump arena and records it in the tape book.
     fn push(&mut self, n: TapeNode) -> NonNull<TapeNode> {
@@ -57,23 +67,11 @@ impl Tape {
     fn index_of(&self, p: NonNull<TapeNode>) -> Option<usize> {
         self.book.iter().position(|&q| q == p)
     }
-}
-
-impl Tape {
-    /// Creates an empty tape with recording disabled.
-    pub fn new() -> Self {
-        Tape {
-            bump: Bump::new(),
-            book: Vec::new(),
-            mark: 0,
-            active: false,
-        }
-    }
 
     #[inline]
     /// Allocates and records a leaf node.
-    pub fn new_leaf(&mut self) -> NonNull<TapeNode> {
-        self.push(TapeNode::default())
+    pub fn new_leaf(&mut self) -> Option<NonNull<TapeNode>> {
+        self.record(TapeNode::default())
     }
 
     #[inline]
