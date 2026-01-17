@@ -1150,21 +1150,23 @@ mod tests {
 
     #[test]
     fn compare_and_flatten() {
-        let x = ADReal::new(5.0);
-        let y = abs(x - 2.0);
-        assert!(y > 2.0); // value-based comparison
-        let z: ADReal = (y + 1.0).into();
-        assert_eq!(z.value(), 4.0);
+        with_tape_test(|| {
+            let x = ADReal::new(5.0);
+            let y = abs(x - 2.0);
+            assert!(y > 2.0); // value-based comparison
+            let z: ADReal = (y + 1.0).into();
+            assert_eq!(z.value(), 4.0);
+        });
     }
 
     #[test]
     fn backprop_basic() {
         with_tape_test(|| {
             Tape::start_recording();
-            let a = ADNumber::new(3.0);
-            let b = ADNumber::new(4.0);
+            let a = ADReal::new(3.0);
+            let b = ADReal::new(4.0);
             let expr = (a * b).sin();
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(out.adjoint().unwrap(), 1.0);
         });
@@ -1173,12 +1175,12 @@ mod tests {
     #[test]
     fn test_late_tape_recording() {
         with_tape_test(|| {
-            let mut a = ADNumber::new(3.0);
+            let mut a = ADReal::new(3.0);
             println!("a: {:?}", a);
             Tape::start_recording(); // start recording
             a.put_on_tape();
             let expr = a * a;
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(a.adjoint().unwrap(), 6.0);
         });
@@ -1188,10 +1190,10 @@ mod tests {
     fn backprop_with_const() {
         with_tape_test(|| {
             Tape::start_recording();
-            let a = ADNumber::new(3.0);
+            let a = ADReal::new(3.0);
             let b = Const(4.0);
             let expr = (a * b).sin();
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(out.adjoint().unwrap(), 1.0);
         });
@@ -1201,10 +1203,10 @@ mod tests {
     fn tape_reset() {
         with_tape_test(|| {
             Tape::start_recording();
-            let a = ADNumber::new(3.0);
-            let b = ADNumber::new(4.0);
+            let a = ADReal::new(3.0);
+            let b = ADReal::new(4.0);
             let expr = (a * b).sin();
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(out.adjoint().unwrap(), 1.0);
 
@@ -1217,10 +1219,10 @@ mod tests {
     fn tape_propagate_mark() {
         with_tape_test(|| {
             Tape::start_recording();
-            let a = ADNumber::new(3.0);
-            let b = ADNumber::new(4.0);
+            let a = ADReal::new(3.0);
+            let b = ADReal::new(4.0);
             let expr = (a * b).sin();
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward_to_mark().unwrap(); // propagate to the current mark
             assert_eq!(out.adjoint().unwrap(), 1.0); // should be 1.0
         });
@@ -1230,10 +1232,10 @@ mod tests {
     fn tape_backward_to_mark() {
         with_tape_test(|| {
             Tape::start_recording();
-            let a = ADNumber::new(3.0);
-            let b = ADNumber::new(4.0);
+            let a = ADReal::new(3.0);
+            let b = ADReal::new(4.0);
             let expr = (a * b).sin();
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward_to_mark().unwrap(); // propagate to the current mark
             assert_eq!(out.adjoint().unwrap(), 1.0); // should be 1.0
 
@@ -1246,9 +1248,9 @@ mod tests {
     fn check_exp_derivate() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(2.0);
+            let x = ADReal::new(2.0);
             let expr = exp(x);
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), f64::exp(2.0)); // derivative of exp(x) wrt x
             assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1259,9 +1261,9 @@ mod tests {
     fn check_log_derivative() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(2.0);
+            let x = ADReal::new(2.0);
             let expr = log(x);
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), 1.0 / 2.0); // derivative of log(x) wrt x
             assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1271,9 +1273,9 @@ mod tests {
     fn check_sqrt_derivative() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(4.0);
+            let x = ADReal::new(4.0);
             let expr = sqrt(x);
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), 0.5 / 2.0); // derivative of sqrt(x) wrt x
             assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1283,9 +1285,9 @@ mod tests {
     fn check_sin_derivative() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(0.0);
+            let x = ADReal::new(0.0);
             let expr = sin(x);
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), 1.0); // derivative of sin(x) wrt x
             assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1295,9 +1297,9 @@ mod tests {
     fn check_cos_derivative() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(0.0);
+            let x = ADReal::new(0.0);
             let expr = cos(x);
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), 0.0); // derivative of cos(x) wrt x
             assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1307,9 +1309,9 @@ mod tests {
     fn check_abs_derivative() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(-3.0);
+            let x = ADReal::new(-3.0);
             let expr = abs(x);
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), -1.0); // derivative of abs(x) wrt x
             assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1319,9 +1321,9 @@ mod tests {
     fn check_pow_derivative() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(2.0);
+            let x = ADReal::new(2.0);
             let expr = pow(x, Const(3.0));
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), 3.0 * 2.0f64.powf(2.0)); // derivative of x^3 wrt x at x=2
             assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1331,10 +1333,10 @@ mod tests {
     fn check_max_derivative() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(2.0);
-            let y = ADNumber::new(3.0);
+            let x = ADReal::new(2.0);
+            let y = ADReal::new(3.0);
             let expr = max(x, y);
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), 0.0); // derivative wrt x
             assert_eq!(y.adjoint().unwrap(), 1.0); // derivative wrt y
@@ -1345,10 +1347,10 @@ mod tests {
     fn check_min_derivative() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(2.0);
-            let y = ADNumber::new(3.0);
+            let x = ADReal::new(2.0);
+            let y = ADReal::new(3.0);
             let expr = min(x, y);
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), 1.0); // derivative wrt x
             assert_eq!(y.adjoint().unwrap(), 0.0); // derivative wrt y
@@ -1359,10 +1361,10 @@ mod tests {
     fn check_flattening() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(5.0);
-            let y = ADNumber::new(3.0);
+            let x = ADReal::new(5.0);
+            let y = ADReal::new(3.0);
             let expr = (x + y) * 2.0;
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             assert_eq!(out.value(), 16.0); // (5 + 3) * 2 = 16
             out.backward().unwrap();
             assert_eq!(out.adjoint().unwrap(), 1.0); // should be 1.0 after propagation
@@ -1373,10 +1375,10 @@ mod tests {
     fn check_add_derivative() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(2.0);
-            let y = ADNumber::new(3.0);
+            let x = ADReal::new(2.0);
+            let y = ADReal::new(3.0);
             let expr = x + y;
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), 1.0);
             assert_eq!(y.adjoint().unwrap(), 1.0);
@@ -1388,10 +1390,10 @@ mod tests {
     fn check_sub_derivative() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(5.0);
-            let y = ADNumber::new(2.0);
+            let x = ADReal::new(5.0);
+            let y = ADReal::new(2.0);
             let expr = x - y;
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), 1.0);
             assert_eq!(y.adjoint().unwrap(), -1.0);
@@ -1403,10 +1405,10 @@ mod tests {
     fn check_mul_derivative() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(4.0);
-            let y = ADNumber::new(2.0);
+            let x = ADReal::new(4.0);
+            let y = ADReal::new(2.0);
             let expr = x * y;
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), 2.0);
             assert_eq!(y.adjoint().unwrap(), 4.0);
@@ -1418,10 +1420,10 @@ mod tests {
     fn check_div_derivative() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(6.0);
-            let y = ADNumber::new(3.0);
+            let x = ADReal::new(6.0);
+            let y = ADReal::new(3.0);
             let expr = x / y;
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert!((x.adjoint().unwrap() - (1.0 / 3.0)).abs() < 1e-12);
             assert!((y.adjoint().unwrap() + (6.0 / 9.0)).abs() < 1e-12);
@@ -1433,9 +1435,9 @@ mod tests {
     fn check_fabs_derivative() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(-2.0);
+            let x = ADReal::new(-2.0);
             let expr = fabs(x);
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), -1.0);
             assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1446,10 +1448,10 @@ mod tests {
     fn check_pow_variable_exponent() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(2.0);
-            let y = ADNumber::new(3.0);
+            let x = ADReal::new(2.0);
+            let y = ADReal::new(3.0);
             let expr = pow(x, y);
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), 3.0 * 2.0f64.powf(2.0));
             assert!((y.adjoint().unwrap() - (8.0 * 2.0f64.ln())).abs() < 1e-12);
@@ -1461,10 +1463,10 @@ mod tests {
     fn check_max_derivative_x_greater() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(5.0);
-            let y = ADNumber::new(3.0);
+            let x = ADReal::new(5.0);
+            let y = ADReal::new(3.0);
             let expr = max(x, y);
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), 1.0);
             assert_eq!(y.adjoint().unwrap(), 0.0);
@@ -1476,10 +1478,10 @@ mod tests {
     fn check_min_derivative_y_less() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(5.0);
-            let y = ADNumber::new(3.0);
+            let x = ADReal::new(5.0);
+            let y = ADReal::new(3.0);
             let expr = min(x, y);
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), 0.0);
             assert_eq!(y.adjoint().unwrap(), 1.0);
@@ -1491,9 +1493,9 @@ mod tests {
     fn check_abs_positive_derivative() {
         with_tape_test(|| {
             Tape::start_recording();
-            let x = ADNumber::new(3.0);
+            let x = ADReal::new(3.0);
             let expr = abs(x);
-            let out: ADNumber = expr.into();
+            let out: ADReal = expr.into();
             out.backward().unwrap();
             assert_eq!(x.adjoint().unwrap(), 1.0);
             assert_eq!(out.adjoint().unwrap(), 1.0);
@@ -1505,8 +1507,8 @@ mod tests {
         with_tape_test(|| {
             Tape::start_recording();
 
-            let a0 = ADNumber::new(5.0); // keep an immutable handle to the leaf
-            let b = ADNumber::new(3.0);
+            let a0 = ADReal::new(5.0); // keep an immutable handle to the leaf
+            let b = ADReal::new(3.0);
             let mut a = a0; // mutable alias
             a *= b; // 5 * 3 = 15
             let c = a;
@@ -1523,19 +1525,18 @@ mod tests {
     #[test]
     fn multithread_recording_derivatives() {
         with_tape_test(|| {
-            Tape::start_recording();
-
-        let handle = std::thread::spawn(|| {
-            let x = ADNumber::new(2.0);
-            let y = ADNumber::new(3.0);
-            let expr = x * y + x;
-            let out: ADNumber = expr.into();
-            out.backward().unwrap();
-            (
-                x.adjoint().unwrap(),
-                y.adjoint().unwrap(),
-                out.adjoint().unwrap(),
-            )
+            let handle = std::thread::spawn(|| {
+                Tape::start_recording();
+                let x = ADReal::new(2.0);
+                let y = ADReal::new(3.0);
+                let expr = x * y + x;
+                let out: ADReal = expr.into();
+                out.backward().unwrap();
+                (
+                    x.adjoint().unwrap(),
+                    y.adjoint().unwrap(),
+                    out.adjoint().unwrap(),
+                )
             });
 
             let (dx, dy, dout) = handle.join().unwrap();
