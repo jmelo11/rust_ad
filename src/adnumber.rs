@@ -1,3 +1,5 @@
+//! Automatic differentiation number types and expression building blocks.
+
 use crate::errors::{ADError, Result};
 use crate::tape::Tape;
 use core::fmt;
@@ -7,10 +9,15 @@ use std::cell::Cell;
 use std::ptr::NonNull;
 use std::{cmp::Ordering, ops::*};
 
+/// Conversion helpers for numeric types used by this crate.
 pub trait ToNumeric<T> {
+    /// Creates a new numeric value from the given scalar.
     fn new(v: T) -> Self;
+    /// Returns the underlying scalar value.
     fn value(&self) -> T;
+    /// Returns the multiplicative identity.
     fn one() -> Self;
+    /// Returns the additive identity.
     fn zero() -> Self;
 }
 
@@ -63,11 +70,15 @@ impl ToNumeric<f64> for ADNumber {
     }
 }
 
+/// A differentiable expression that can record its contribution to the tape.
 pub trait Expr: Clone {
+    /// Returns the scalar value of the expression.
     fn inner_value(&self) -> f64;
+    /// Pushes this expression's adjoint contribution into the tape node.
     fn push_adj(&self, parent: &mut TapeNode, adj: f64);
 }
 
+/// A scalar value tracked on the automatic differentiation tape.
 #[derive(Clone, Copy, Default)]
 pub struct ADNumber {
     val: f64,
@@ -96,18 +107,22 @@ impl ADNumber {
         });
     }
 
+    /// Sets the active tape for the current thread.
     pub fn set_tape(t: &mut Tape) {
         Self::TAPE_PTR.with(|c| c.set(t));
     }
 
+    /// Returns whether a tape pointer has been configured for this thread.
     pub fn has_tape() -> bool {
         Self::TAPE_PTR.with(|c| !c.get().is_null())
     }
 
+    /// Returns the raw pointer address of the current tape.
     pub fn tape_addr() -> *mut Tape {
         Self::TAPE_PTR.with(|c| c.get())
     }
 
+    /// Creates a new scalar, recording it on the tape if recording is active.
     pub fn new(v: f64) -> Self {
         Self::TAPE_PTR.with(|t| {
             let ptr = t.get();
@@ -132,17 +147,20 @@ impl ADNumber {
     }
 
     #[inline]
+    /// Returns the stored scalar value.
     pub fn value(&self) -> f64 {
         self.val
     }
 
     #[inline]
+    /// Returns the adjoint for this value if it is on the tape.
     pub fn adjoint(&self) -> Result<f64> {
         self.node
             .map(|p| unsafe { p.as_ref().adj })
             .ok_or(ADError::NodeNotIndexedInTapeErr)
     }
 
+    /// Runs a full backward pass from this node to the start of the tape.
     pub fn backward(&self) -> Result<()> {
         let root = self.node.ok_or(ADError::NodeNotIndexedInTapeErr)?;
 
@@ -154,6 +172,7 @@ impl ADNumber {
         Ok(())
     }
 
+    /// Runs a backward pass from the current mark down to the start.
     pub fn backward_mark_to_start(&self) -> Result<()> {
         let root: NonNull<TapeNode> = self.node.ok_or(ADError::NodeNotIndexedInTapeErr)?;
 
@@ -165,6 +184,7 @@ impl ADNumber {
         Ok(())
     }
 
+    /// Runs a backward pass from the end of the tape down to the current mark.
     pub fn backward_to_mark(&self) -> Result<()> {
         let root: NonNull<TapeNode> = self.node.ok_or(ADError::NodeNotIndexedInTapeErr)?;
         Self::TAPE_PTR.with(|t| {
@@ -175,6 +195,7 @@ impl ADNumber {
         Ok(())
     }
 
+    /// Attaches this value to the current tape if it is not already recorded.
     pub fn put_on_tape(&mut self) {
         if self.node.is_some() {
             return; // already on a tape
@@ -194,10 +215,12 @@ impl ADNumber {
 
 impl Expr for ADNumber {
     #[inline]
+    /// Returns the scalar value for use in tape recording.
     fn inner_value(&self) -> f64 {
         self.val
     }
 
+    /// Pushes this value into the parent tape node with the given derivative.
     fn push_adj(&self, parent: &mut TapeNode, deriv: f64) {
         if let Some(p) = self.node {
             parent.childs.push(p);
@@ -206,6 +229,7 @@ impl Expr for ADNumber {
     }
 }
 
+/// Records an expression into the tape, returning the resulting `ADNumber`.
 fn flatten<E: Expr + Clone>(e: &E) -> ADNumber {
     let mut node = TapeNode::default();
     e.push_adj(&mut node, 1.0);
@@ -251,46 +275,54 @@ impl PartialOrd for ADNumber {
 // }
 
 #[derive(Clone, Copy)]
+/// A constant expression wrapper for interoperability.
 pub struct Const(pub f64);
 
 impl From<f64> for Const {
     #[inline]
+    /// Converts a `f64` into a constant expression.
     fn from(v: f64) -> Self {
         Const(v)
     }
 }
 impl From<f32> for Const {
     #[inline]
+    /// Converts a `f32` into a constant expression.
     fn from(v: f32) -> Self {
         Const(v as f64)
     }
 }
 impl From<i32> for Const {
     #[inline]
+    /// Converts an `i32` into a constant expression.
     fn from(v: i32) -> Self {
         Const(v as f64)
     }
 }
 impl From<u32> for Const {
     #[inline]
+    /// Converts a `u32` into a constant expression.
     fn from(v: u32) -> Self {
         Const(v as f64)
     }
 }
 impl From<i64> for Const {
     #[inline]
+    /// Converts an `i64` into a constant expression.
     fn from(v: i64) -> Self {
         Const(v as f64)
     }
 }
 impl From<u64> for Const {
     #[inline]
+    /// Converts a `u64` into a constant expression.
     fn from(v: u64) -> Self {
         Const(v as f64)
     }
 }
 impl From<Const> for f64 {
     #[inline]
+    /// Extracts the underlying `f64` from a constant expression.
     fn from(c: Const) -> Self {
         c.0
     }
@@ -298,134 +330,169 @@ impl From<Const> for f64 {
 
 impl Expr for Const {
     #[inline]
+    /// Returns the scalar value of the constant expression.
     fn inner_value(&self) -> f64 {
         self.0
     }
     #[inline]
+    /// Constants do not contribute adjoints to the tape.
     fn push_adj(&self, _: &mut TapeNode, _: f64) {}
 }
 
+/// A binary operation definition for the expression system.
 pub trait BinOp {
+    /// Evaluates the operator on the input values.
     fn eval(l: f64, r: f64) -> f64;
+    /// Computes the derivative with respect to the left operand.
     fn d_left(l: f64, r: f64) -> f64;
+    /// Computes the derivative with respect to the right operand.
     fn d_right(l: f64, r: f64) -> f64;
 }
 
 #[derive(Clone, Copy, Debug)]
+/// Binary addition operator.
 pub struct AddOp;
 impl BinOp for AddOp {
     #[inline]
+    /// Evaluates the operator on the input values.
     fn eval(l: f64, r: f64) -> f64 {
         l + r
     }
     #[inline]
+    /// Returns the derivative with respect to the left operand.
     fn d_left(_: f64, _: f64) -> f64 {
         1.0
     }
     #[inline]
+    /// Returns the derivative with respect to the right operand.
     fn d_right(_: f64, _: f64) -> f64 {
         1.0
     }
 }
 #[derive(Clone, Copy, Debug)]
+/// Binary subtraction operator.
 pub struct SubOp;
 impl BinOp for SubOp {
     #[inline]
+    /// Evaluates the operator on the input values.
     fn eval(l: f64, r: f64) -> f64 {
         l - r
     }
     #[inline]
+    /// Returns the derivative with respect to the left operand.
     fn d_left(_: f64, _: f64) -> f64 {
         1.0
     }
     #[inline]
+    /// Returns the derivative with respect to the right operand.
     fn d_right(_: f64, _: f64) -> f64 {
         -1.0
     }
 }
 #[derive(Clone, Copy, Debug)]
+/// Binary multiplication operator.
 pub struct MulOp;
 impl BinOp for MulOp {
     #[inline]
+    /// Evaluates the operator on the input values.
     fn eval(l: f64, r: f64) -> f64 {
         l * r
     }
     #[inline]
+    /// Returns the derivative with respect to the left operand.
     fn d_left(_: f64, r: f64) -> f64 {
         r
     }
     #[inline]
+    /// Returns the derivative with respect to the right operand.
     fn d_right(l: f64, _: f64) -> f64 {
         l
     }
 }
 #[derive(Clone, Copy, Debug)]
+/// Binary division operator.
 pub struct DivOp;
 impl BinOp for DivOp {
     #[inline]
+    /// Evaluates the operator on the input values.
     fn eval(l: f64, r: f64) -> f64 {
         l / r
     }
     #[inline]
+    /// Returns the derivative with respect to the left operand.
     fn d_left(_: f64, r: f64) -> f64 {
         1.0 / r
     }
     #[inline]
+    /// Returns the derivative with respect to the right operand.
     fn d_right(l: f64, r: f64) -> f64 {
         -l / (r * r)
     }
 }
 #[derive(Clone, Copy, Debug)]
+/// Binary power operator.
 pub struct PowOp;
 impl BinOp for PowOp {
     #[inline]
+    /// Evaluates the operator on the input values.
     fn eval(l: f64, r: f64) -> f64 {
         l.powf(r)
     }
     #[inline]
+    /// Returns the derivative with respect to the left operand.
     fn d_left(l: f64, r: f64) -> f64 {
         r * l.powf(r - 1.0)
     }
     #[inline]
+    /// Returns the derivative with respect to the right operand.
     fn d_right(l: f64, r: f64) -> f64 {
         l.powf(r) * l.ln()
     }
 }
 
 #[derive(Clone, Copy, Debug)]
+/// Binary maximum operator.
 pub struct MaxOp;
 impl BinOp for MaxOp {
     #[inline]
+    /// Evaluates the operator on the input values.
     fn eval(l: f64, r: f64) -> f64 {
         l.max(r)
     }
     #[inline]
+    /// Returns the derivative with respect to the left operand.
     fn d_left(l: f64, r: f64) -> f64 {
         if l > r { 1.0 } else { 0.0 }
     }
     #[inline]
+    /// Returns the derivative with respect to the right operand.
     fn d_right(l: f64, r: f64) -> f64 {
         if r > l { 1.0 } else { 0.0 }
     }
 }
 #[derive(Clone, Copy, Debug)]
+/// Binary minimum operator.
 pub struct MinOp;
 impl BinOp for MinOp {
     #[inline]
+    /// Evaluates the operator on the input values.
     fn eval(l: f64, r: f64) -> f64 {
         l.min(r)
     }
     #[inline]
+    /// Returns the derivative with respect to the left operand.
     fn d_left(l: f64, r: f64) -> f64 {
         if l < r { 1.0 } else { 0.0 }
     }
     #[inline]
+    /// Returns the derivative with respect to the right operand.
     fn d_right(l: f64, r: f64) -> f64 {
         if r < l { 1.0 } else { 0.0 }
     }
 }
 
 #[derive(Clone)]
+/// A binary expression over two child expressions.
 pub struct BinExpr<L, R, O> {
     l: L,
     r: R,
@@ -434,6 +501,7 @@ pub struct BinExpr<L, R, O> {
 }
 impl<L: Expr, R: Expr, O: BinOp> BinExpr<L, R, O> {
     #[inline]
+    /// Constructs a new binary expression and caches its value.
     fn new(l: L, r: R) -> Self {
         let val = O::eval(l.inner_value(), r.inner_value());
         Self {
@@ -446,9 +514,11 @@ impl<L: Expr, R: Expr, O: BinOp> BinExpr<L, R, O> {
 }
 impl<L: Expr, R: Expr, O: BinOp + Clone> Expr for BinExpr<L, R, O> {
     #[inline]
+    /// Returns the cached scalar value of the expression.
     fn inner_value(&self) -> f64 {
         self.val
     }
+    /// Pushes adjoint contributions for the left and right child expressions.
     fn push_adj(&self, parent: &mut TapeNode, adj: f64) {
         self.l.push_adj(
             parent,
@@ -461,21 +531,27 @@ impl<L: Expr, R: Expr, O: BinOp + Clone> Expr for BinExpr<L, R, O> {
     }
 }
 
+/// A unary operation definition for the expression system.
 pub trait UnOp {
+    /// Evaluates the operator on the input value.
     fn eval(x: f64) -> f64;
+    /// Computes the derivative with respect to the input.
     fn deriv(x: f64, v: f64) -> f64;
 }
 
 macro_rules! un_op {
-    ($name:ident,$eval:expr,$d:expr) => {
+    ($name:ident, $doc:expr, $eval:expr, $d:expr) => {
+        #[doc = $doc]
         #[derive(Clone, Copy, Debug)]
         pub struct $name;
         impl UnOp for $name {
             #[inline]
+            /// Evaluates the unary operator.
             fn eval(x: f64) -> f64 {
                 $eval(x)
             }
             #[inline]
+            /// Returns the derivative of the unary operator.
             fn deriv(x: f64, v: f64) -> f64 {
                 $d(x, v)
             }
@@ -483,15 +559,36 @@ macro_rules! un_op {
     };
 }
 
-un_op!(ExpOp, f64::exp, |_x, v| v);
-un_op!(LogOp, f64::ln, |x, _| 1.0 / x);
-un_op!(SqrtOp, f64::sqrt, |_x, v| 0.5 / v);
-un_op!(FabsOp, f64::abs, |x, _| if x >= 0.0 { 1.0 } else { -1.0 });
-un_op!(SinOp, f64::sin, |x, _v| f64::cos(x));
-un_op!(CosOp, f64::cos, |x, _v| -f64::sin(x));
-un_op!(AbsOp, f64::abs, |x, _v| if x >= 0.0 { 1.0 } else { -1.0 });
+un_op!(ExpOp, "Unary exponential operator.", f64::exp, |_x, v| v);
+un_op!(LogOp, "Unary natural logarithm operator.", f64::ln, |x, _| 1.0 / x);
+un_op!(SqrtOp, "Unary square root operator.", f64::sqrt, |_x, v| 0.5 / v);
+un_op!(
+    FabsOp,
+    "Unary absolute value operator (alias).",
+    f64::abs,
+    |x, _| if x >= 0.0 { 1.0 } else { -1.0 }
+);
+un_op!(
+    SinOp,
+    "Unary sine operator.",
+    f64::sin,
+    |x, _v| f64::cos(x)
+);
+un_op!(
+    CosOp,
+    "Unary cosine operator.",
+    f64::cos,
+    |x, _v| -f64::sin(x)
+);
+un_op!(
+    AbsOp,
+    "Unary absolute value operator.",
+    f64::abs,
+    |x, _v| if x >= 0.0 { 1.0 } else { -1.0 }
+);
 
 #[derive(Clone)]
+/// A unary expression over a child expression.
 pub struct UnExpr<A, O> {
     a: A,
     val: f64,
@@ -499,6 +596,7 @@ pub struct UnExpr<A, O> {
 }
 impl<A: Expr, O: UnOp> UnExpr<A, O> {
     #[inline]
+    /// Constructs a new unary expression and caches its value.
     fn new(a: A) -> Self {
         let val = O::eval(a.inner_value());
         Self {
@@ -510,9 +608,11 @@ impl<A: Expr, O: UnOp> UnExpr<A, O> {
 }
 impl<A: Expr, O: UnOp + Clone> Expr for UnExpr<A, O> {
     #[inline]
+    /// Returns the cached scalar value of the expression.
     fn inner_value(&self) -> f64 {
         self.val
     }
+    /// Pushes adjoint contributions for the child expression.
     fn push_adj(&self, parent: &mut TapeNode, adj: f64) {
         self.a
             .push_adj(parent, adj * O::deriv(self.a.inner_value(), self.val));
@@ -819,43 +919,53 @@ where
 }
 
 #[inline]
+/// Returns the exponential of an expression.
 pub fn exp<A: Expr + Clone>(a: A) -> UnExpr<A, ExpOp> {
     UnExpr::new(a)
 }
 #[inline]
+/// Returns the natural logarithm of an expression.
 pub fn log<A: Expr + Clone>(a: A) -> UnExpr<A, LogOp> {
     UnExpr::new(a)
 }
 #[inline]
+/// Returns the square root of an expression.
 pub fn sqrt<A: Expr + Clone>(a: A) -> UnExpr<A, SqrtOp> {
     UnExpr::new(a)
 }
 #[inline]
+/// Returns the absolute value of an expression.
 pub fn fabs<A: Expr + Clone>(a: A) -> UnExpr<A, FabsOp> {
     UnExpr::new(a)
 }
 #[inline]
+/// Returns the sine of an expression.
 pub fn sin<A: Expr + Clone>(a: A) -> UnExpr<A, SinOp> {
     UnExpr::new(a)
 }
 #[inline]
+/// Returns the cosine of an expression.
 pub fn cos<A: Expr + Clone>(a: A) -> UnExpr<A, CosOp> {
     UnExpr::new(a)
 }
 #[inline]
+/// Returns the absolute value of an expression.
 pub fn abs<A: Expr + Clone>(a: A) -> UnExpr<A, AbsOp> {
     UnExpr::new(a)
 }
 
 #[inline]
+/// Raises one expression to the power of another.
 pub fn pow<L: Expr + Clone, R: Expr + Clone>(l: L, r: R) -> BinExpr<L, R, PowOp> {
     BinExpr::new(l, r)
 }
 #[inline]
+/// Returns the maximum of two expressions.
 pub fn max<L: Expr + Clone, R: Expr + Clone>(l: L, r: R) -> BinExpr<L, R, MaxOp> {
     BinExpr::new(l, r)
 }
 #[inline]
+/// Returns the minimum of two expressions.
 pub fn min<L: Expr + Clone, R: Expr + Clone>(l: L, r: R) -> BinExpr<L, R, MinOp> {
     BinExpr::new(l, r)
 }
@@ -866,6 +976,7 @@ where
     R: Expr + Clone,
     O: BinOp + Clone,
 {
+    /// Flattens a binary expression into an `ADNumber` and records it.
     fn from(e: BinExpr<L, R, O>) -> Self {
         flatten(&e)
     }
@@ -875,69 +986,84 @@ where
     A: Expr + Clone,
     O: UnOp + Clone,
 {
+    /// Flattens a unary expression into an `ADNumber` and records it.
     fn from(e: UnExpr<A, O>) -> Self {
         flatten(&e)
     }
 }
 impl From<f64> for ADNumber {
+    /// Converts a `f64` into an `ADNumber`, recording if the tape is active.
     fn from(v: f64) -> Self {
         ADNumber::new(v)
     }
 }
 impl From<f32> for ADNumber {
+    /// Converts a `f32` into an `ADNumber`, recording if the tape is active.
     fn from(v: f32) -> Self {
         ADNumber::new(v as f64)
     }
 }
 impl From<i32> for ADNumber {
+    /// Converts an `i32` into an `ADNumber`, recording if the tape is active.
     fn from(v: i32) -> Self {
         ADNumber::new(v as f64)
     }
 }
 
+/// Convenience methods for common floating-point operations on expressions.
 pub trait FloatExt: Expr + Clone + Sized {
     #[inline]
+    /// Returns `e^x` for the expression.
     fn exp(self) -> UnExpr<Self, ExpOp> {
         UnExpr::new(self)
     }
     #[inline]
+    /// Returns the natural logarithm of the expression.
     fn ln(self) -> UnExpr<Self, LogOp> {
         UnExpr::new(self)
     }
     #[inline]
+    /// Returns the sine of the expression.
     fn sin(self) -> UnExpr<Self, SinOp> {
         UnExpr::new(self)
     }
     #[inline]
+    /// Returns the cosine of the expression.
     fn cos(self) -> UnExpr<Self, CosOp> {
         UnExpr::new(self)
     }
     #[inline]
+    /// Returns the absolute value of the expression.
     fn abs(self) -> UnExpr<Self, AbsOp> {
         UnExpr::new(self)
     }
 
     #[inline]
+    /// Raises the expression to a constant power.
     fn powf(self, p: f64) -> BinExpr<Self, Const, PowOp> {
         BinExpr::new(self, Const(p))
     }
 
     #[inline]
+    /// Returns the square root of the expression.
     fn sqrt(self) -> UnExpr<Self, SqrtOp> {
         UnExpr::new(self)
     }
 
     #[inline]
+    /// Raises the expression to the power of another expression.
     fn pow_expr<R: Expr + Clone>(self, p: R) -> BinExpr<Self, R, PowOp> {
         BinExpr::new(self, p)
     }
 
     #[inline]
+    /// Returns the minimum of two expressions.
     fn min<R: Expr + Clone>(self, r: R) -> BinExpr<Self, R, MinOp> {
         BinExpr::new(self, r)
     }
 
     #[inline]
+    /// Returns the maximum of two expressions.
     fn max<R: Expr + Clone>(self, r: R) -> BinExpr<Self, R, MaxOp> {
         BinExpr::new(self, r)
     }
