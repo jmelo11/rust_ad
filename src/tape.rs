@@ -1,7 +1,11 @@
 //! Tape storage and propagation utilities.
 
 use bumpalo::Bump;
-use std::{cell::RefCell, ptr::NonNull};
+use std::{
+    cell::{Cell, RefCell},
+    ptr::NonNull,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 
 use crate::errors::{ADError, Result};
 use crate::prelude::TapeNode;
@@ -37,6 +41,7 @@ impl Tape {
     #[inline(always)]
     /// Resets all adjoints on the current thread's tape.
     pub fn reset_adjoints() {
+        Self::ensure_thread_tape();
         TAPE.with(|tc| {
             for &ptr in &tc.borrow().book {
                 unsafe { (*ptr.as_ptr()).adj = 0.0 };
@@ -46,6 +51,7 @@ impl Tape {
 
     /// Prints the tape contents to stdout for debugging.
     pub fn debug_print() {
+        Self::ensure_thread_tape();
         TAPE.with(|tc| {
             let tape = tc.borrow();
             for (i, &ptr) in tape.book.iter().enumerate() {
@@ -125,6 +131,8 @@ impl Tape {
 
     /// Clears the tape and begins recording nodes in the thread-local tape.
     pub fn start_recording() {
+        RECORDING_EPOCH.fetch_add(1, Ordering::AcqRel);
+        RECORDING_ACTIVE.store(true, Ordering::Release);
         TAPE.with(|tc| {
             let mut t = tc.borrow_mut();
             t.bump.reset();
@@ -132,21 +140,28 @@ impl Tape {
             t.mark = 0;
             t.active = true;
         });
+        TAPE_EPOCH.with(|epoch| {
+            let global = RECORDING_EPOCH.load(Ordering::Acquire);
+            epoch.set(global);
+        });
     }
 
     /// Stops recording nodes on the thread-local tape.
     pub fn stop_recording() {
+        RECORDING_ACTIVE.store(false, Ordering::Release);
         TAPE.with(|tc| tc.borrow_mut().active = false);
     }
 
     #[inline]
     /// Returns whether the thread-local tape is active.
     pub fn is_active() -> bool {
+        Self::ensure_thread_tape();
         TAPE.with(|tc| tc.borrow().active)
     }
 
     /// Sets the current mark to the end of the tape.
     pub fn set_mark() {
+        Self::ensure_thread_tape();
         TAPE.with(|tc| {
             let len = tc.borrow().book.len();
             tc.borrow_mut().mark = len;
@@ -155,6 +170,7 @@ impl Tape {
 
     /// Truncates the tape back to the current mark.
     pub fn rewind_to_mark() {
+        Self::ensure_thread_tape();
         TAPE.with(|tc| {
             let mark = tc.borrow().mark;
             tc.borrow_mut().book.truncate(mark);
@@ -163,12 +179,39 @@ impl Tape {
 
     /// Clears the tape and resets the mark without changing active state.
     pub fn rewind_to_init() {
+        Self::ensure_thread_tape();
         TAPE.with(|tc| {
             let mut t = tc.borrow_mut();
             t.bump.reset();
             t.book.clear();
             t.mark = 0;
         });
+    }
+
+    /// Ensures the thread-local tape matches the global recording state.
+    pub fn ensure_thread_tape() -> bool {
+        let active = RECORDING_ACTIVE.load(Ordering::Acquire);
+        if !active {
+            TAPE.with(|tc| tc.borrow_mut().active = false);
+            return false;
+        }
+
+        let global_epoch = RECORDING_EPOCH.load(Ordering::Acquire);
+        TAPE_EPOCH.with(|epoch| {
+            if epoch.get() != global_epoch {
+                TAPE.with(|tc| {
+                    let mut t = tc.borrow_mut();
+                    t.bump.reset();
+                    t.book.clear();
+                    t.mark = 0;
+                    t.active = true;
+                });
+                epoch.set(global_epoch);
+            } else {
+                TAPE.with(|tc| tc.borrow_mut().active = true);
+            }
+        });
+        true
     }
 }
 
@@ -181,3 +224,10 @@ thread_local! {
         active: false,
     });
 }
+
+thread_local! {
+    static TAPE_EPOCH: Cell<usize> = Cell::new(0);
+}
+
+static RECORDING_ACTIVE: AtomicBool = AtomicBool::new(false);
+static RECORDING_EPOCH: AtomicUsize = AtomicUsize::new(0);
