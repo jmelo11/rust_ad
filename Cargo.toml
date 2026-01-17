@@ -1,0 +1,9 @@
+[package]
+name = "rust_ad"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bumpalo = "3.19.1"
+serde = "1.0.228"
+thiserror = "2.0.17"
