@@ -3,7 +3,11 @@ name = "rust_ad"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["rust_ad_macros"]
+
 [dependencies]
 bumpalo = "3.19.1"
 serde = "1.0.228"
 thiserror = "2.0.17"
+rust_ad_macros = { path = "rust_ad_macros" }
