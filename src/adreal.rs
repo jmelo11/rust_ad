@@ -968,6 +968,12 @@ impl From<i32> for ADReal {
         ADReal::new(v as f64)
     }
 }
+impl From<Const> for ADReal {
+    /// Converts a `Const` expression into an `ADReal`.
+    fn from(v: Const) -> Self {
+        ADReal::new(v.0)
+    }
+}
 
 /// Convenience methods for common floating-point operations on expressions.
 pub trait FloatExt: Expr + Clone + Sized {

@@ -31,8 +31,18 @@ name = "rust_ad"
 version = "0.1.0"
 dependencies = [
  "bumpalo",
+ "rust_ad_macros",
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "rust_ad_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
