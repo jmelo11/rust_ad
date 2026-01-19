@@ -210,24 +210,6 @@ impl PartialOrd for ADReal {
     }
 }
 
-// impl Serialize for ADReal {
-//     fn serialize<S>(&self, s: S) -> std::result::Result<S::Ok, S::Error>
-//     where
-//         S: serde::Serializer,
-//     {
-//         s.serialize_f64(self.val)
-//     }
-// }
-// impl<'de> Deserialize<'de> for ADReal {
-//     fn deserialize<D>(d: D) -> std::result::Result<Self, D::Error>
-//     where
-//         D: serde::Deserializer<'de>,
-//     {
-//         let v = f64::deserialize(d)?;
-//         Ok(ADReal::new(v))
-//     }
-// }
-
 #[derive(Clone, Copy)]
 /// A constant expression wrapper for interoperability.
 pub struct Const(pub f64);

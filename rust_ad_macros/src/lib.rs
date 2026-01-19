@@ -5,6 +5,8 @@ use syn::{
     ItemFn, ItemStruct, Lit, ReturnType,
 };
 
+/// # differentiable
+/// Transforms methods and struct into differentiable counterparts.
 #[proc_macro_attribute]
 pub fn differentiable(attr: TokenStream, item: TokenStream) -> TokenStream {
     let diff_name = parse_macro_input!(attr as Ident);
